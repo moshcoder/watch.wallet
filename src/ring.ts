@@ -13,7 +13,7 @@
  * our own name without that header came from Moshpit DNS and gets direct links;
  * anything else gets relay links.
  *
- * Same file in seo.rank and family.ancestry; pit.world has the original in src/ring.ts.
+ * Same file in seo.rank, family.ancestry and deadman.switch; pit.world has the original in src/ring.ts.
  */
 const RING_HOME = 'https://pit.world/ring'
 const RING_API = 'https://pit.world/api/ring'
