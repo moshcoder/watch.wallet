@@ -100,7 +100,7 @@ DATABASE_URL=postgres://… WATCHWALLET_SECRET=$(openssl rand -hex 32) bun src/s
 | `WATCHWALLET_RPC_ETHEREUM`, `_BASE`, `_POLYGON`, `_SOLANA` | comma-separated RPC URLs, tried in order |
 | `MEMPOOL_URL`, `COINBASE_URL`, `SOURCE_TIMEOUT_MS` | other sources |
 | `CRAWLPROOF_SITE` | analytics on public pages |
-| `PORT` (8802), `HOST`, `WORKER=off` | |
+| `PORT` (8805), `HOST`, `WORKER=off` | |
 
 CLI: `WATCHWALLET_KEY`, `WATCHWALLET_URL`.
 

@@ -609,7 +609,7 @@ export async function serve(opts: { port?: number } = {}) {
   startRingFooterRefresh()
   startRingRefresh()
   if (env.WORKER !== 'off') startWorker({ store, notifier, plans, key: env.WATCHWALLET_SECRET, origin: RELAY_ORIGIN, sources, log: console.log })
-  const port = opts.port ?? Number(env.PORT ?? 8802)
+  const port = opts.port ?? Number(env.PORT ?? 8805)
   return Bun.serve({ port, hostname: env.HOST ?? '127.0.0.1', fetch: app.fetch, idleTimeout: 30 })
 }
 
