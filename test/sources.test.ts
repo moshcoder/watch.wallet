@@ -88,6 +88,17 @@ describe('source adapters', () => {
     expect(r.balances).toEqual({ SOL: '2000000000', USDC: '1500000', USDT: '0' })
   })
 
+  test('solana: an exchange wallet above 2^53 lamports still reads', async () => {
+    // The live answer for an exchange hot wallet on 2026-10-21, sent as raw JSON text.
+    const net = fakeNet((_u, body) =>
+      body.method === 'getBalance'
+        ? new Response('{"jsonrpc":"2.0","id":1,"result":{"context":{"slot":1},"value":11175975344465202}}', { headers: { 'content-type': 'application/json' } })
+        : rpc({ context: { slot: 1 }, value: [] }),
+    )
+    const r = await readAddress(sourceConfig(ENV, net.f), 'solana', '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM')
+    expect(BigInt(r.balances.SOL!) / 1_000_000_000n).toBe(11_175_975n)
+  })
+
   test('solana: a malformed token account fails the read', async () => {
     const net = fakeNet((_u, body) => rpc(body.method === 'getBalance' ? { value: 1 } : { value: [{ account: {} }] }))
     await expect(readAddress(sourceConfig(ENV, net.f), 'solana', 'vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg')).rejects.toBeInstanceOf(SourceError)

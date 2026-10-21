@@ -84,7 +84,10 @@ export async function rpcCall(cfg: SourceConfig, urls: string[], method: string,
   throw last
 }
 
-const isUint = (v: unknown): v is string | number => (typeof v === 'string' && /^\d+$/.test(v)) || (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)
+// Not Number.isSafeInteger: an exchange hot wallet holds more than 2^53 lamports, which
+// JSON.parse rounds to the nearest double. That is still a whole number, the same
+// one every read, so change detection stays exact to within a few lamports.
+const isUint = (v: unknown): v is string | number => (typeof v === 'string' && /^\d+$/.test(v)) || (typeof v === 'number' && Number.isInteger(v) && v >= 0)
 
 /** Bitcoin: confirmed funded minus spent, plus the same for the mempool. A mempool tx moves the balance at once. */
 export async function readBitcoin(cfg: SourceConfig, address: string): Promise<Reading> {

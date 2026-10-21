@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/watchwallet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "watch.wallet: know the second your wallet moves. Watch any address on Bitcoin, Ethereum, Base, Polygon or Solana, or a price, and get an email, a push, or a phone call that wakes you up.",
   "license": "MIT",
   "type": "module",
