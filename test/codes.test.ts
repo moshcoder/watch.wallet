@@ -172,6 +172,25 @@ describe('invites and ?ref=', () => {
     expect(Math.round(((await userOf(i.email)).plan_until!.getTime() - Date.now()) / DAY)).toBe(INVITE_DAYS)
   })
 
+  test('the invite and ?ref= still count when the sign-in link is opened in another browser', async () => {
+    const inviter = await store.ensureUser('inviter2@example.com')
+    const inv = await codes.affiliates.createInvite(inviter.id)
+    const affiliate = await store.ensureUser('aff3@example.com')
+    const ref = await codes.affiliates.affiliateCode(affiliate.id)
+    // The laptop opens the invite and asks for the link; the phone clicks it, with no cookies.
+    const laptop = browser()
+    await send(laptop, `/i/${inv.code}?ref=${ref}`)
+    await send(laptop, '/signin', form({ csrf: 'anon', email: 'phone@example.com', next: '/me' }))
+    const t = mails.at(-1)!.text.match(/\/auth\/([A-Za-z0-9_-]+)/)![1]!
+    const phone = browser()
+    expect((await send(phone, `/auth/${t}`, form({ next: '/me' }))).status).toBe(302)
+    const u = await userOf('phone@example.com')
+    expect(await codes.affiliates.invitedBy(u.id)).toBe(inviter.id)
+    expect(await codes.affiliates.affiliateOf(u.id)).toBe(affiliate.id)
+    expect(u.plan).toBe('watcher')
+    expect((await userOf('inviter2@example.com')).plan).toBe('watcher')
+  })
+
   test('three invites each, over the web and the API', async () => {
     const u = await store.ensureUser('quota@example.com')
     const key = await store.newApiKey(u.id)
