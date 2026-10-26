@@ -4,6 +4,7 @@
  */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { INVITE_DAYS, INVITES_PER_PERSON } from './codes.js'
 import { CHAIN_INFO, CHAINS, shortAddress, type Chain } from './chains.js'
 import type { Alert, Payment, User, Watch } from './db.js'
 import { describeBalances, usd } from './engine.js'
@@ -189,7 +190,8 @@ curl ${SITE}/api/v1/watches -H "authorization: Bearer $WATCHWALLET_KEY"
 curl -X POST ${SITE}/api/v1/watches -H "authorization: Bearer $WATCHWALLET_KEY" \\
   -H 'content-type: application/json' -d '{"kind":"address","chain":"base","address":"0x…","label":"Treasury"}'</pre>
 <p class="muted small">Endpoints: <code>GET /api/v1/me</code>, <code>GET|POST /api/v1/watches</code>, <code>GET|PATCH|DELETE /api/v1/watches/:id</code>, <code>POST /api/v1/watches/:id/(pause|resume)</code>, <code>GET /api/v1/alerts</code>, <code>POST /api/v1/alerts/ack</code>, <code>POST /api/v1/alerts/:id/ack</code>, and without a key <code>GET /api/v1/check?chain=&amp;address=</code> (rate limited).</p>
-<p class="muted small">MCP tools: check_address (no key), list_watches, add_watch, add_price_watch, remove_watch, recent_alerts.</p></div>
+<p class="muted small">MCP tools: check_address (no key), list_watches, add_watch, add_price_watch, remove_watch, recent_alerts, redeem_code, create_invite.</p></div>
+<div class="card" id="codes"><h2>Codes and invites</h2><p>A credit code someone gave you goes on <a href="/me#code">your page</a> under "Have a code?" (or <code>watchwallet redeem CR-…</code>, or <code>POST /api/v1/redeem {"code"}</code>): it adds days of Watcher, on top of any time you have left. Every account also has ${INVITES_PER_PERSON} single-use invite links (<a href="/invites">Invites</a>); whoever makes a new account through one, and you, each get ${INVITE_DAYS} days of Watcher. Your own link (<code>/?ref=…</code>) is there too, for everyone else.</p></div>
 <div class="card"><h2>What we keep</h2><p>Your email, the addresses and prices you watch, their last balances and your alerts. We never ask for a private key or a seed, and nothing here can move funds. Delete your account and it all goes.</p></div>
 <div class="card"><h2>Who runs this</h2><p><a href="https://profullstack.com">Profullstack, Inc.</a> Source: <a href="${REPO}">${REPO.replace('https://', '')}</a>. Questions: <a href="mailto:alerts@pit.world">alerts@pit.world</a>.</p></div>`,
   })
@@ -365,6 +367,12 @@ ${room ? `<div class="card" id="add">
   </form>
   ${user.webhook_secret ? `<p class="small">Signing secret: <code>${esc(user.webhook_secret)}</code></p><form method="post" action="/me/webhook-secret">${csrfField(ctx)}<button class="linkish">make a new secret</button></form>` : ''}
 </div>
+<div class="card" id="code">
+  <h2>Have a code?</h2>
+  <p class="muted small">A credit code adds days of Watcher, on top of any time you have left.</p>
+  <form method="post" action="/me/redeem" class="row">${csrfField(ctx)}<input name="code" maxlength="80" required autocomplete="off" spellcheck="false" placeholder="CR-XXXX-XXXX-XXXX-XXXX" aria-label="Credit code"><button class="btn ghost">Redeem</button></form>
+  <p class="muted small">You also have a few single-use invite links: whoever joins through one, and you, each get ${INVITE_DAYS} days of Watcher. <a href="/invites">Your invites</a></p>
+</div>
 <div class="card" id="account">
   <h2>Account</h2>
   <form method="post" action="/me/name" class="row">${csrfField(ctx)}<input name="name" maxlength="80" placeholder="Your name" value="${esc(user.name)}"><button class="btn ghost">Save</button></form>
@@ -458,5 +466,55 @@ ${ctx.user ? (d.enabled ? `<div class="card"><h2>Get Watcher</h2>
   <button class="btn">Pay with CoinPay</button>
 </form></div>` : '<p class="note">Payments open soon.</p>') : ''}
 ${d.payments.length ? `<div class="card"><h2>Your payments</h2><table><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Status</th></tr>${d.payments.map((p) => `<tr><td>${esc(day(p.created_at))}</td><td>${esc(p.product)}</td><td>${dollars(p.amount_cents)} ${esc(p.chain)}</td><td>${esc(p.settled_at ? 'paid' : p.status)}</td></tr>`).join('')}</table></div>` : ''}`,
+  })
+}
+
+/** Where an invite link lands: the invite rides in a cookie until they make an account. */
+export function invitedPage(ctx: Ctx): string {
+  return layout({
+    ctx,
+    noindex: true,
+    title: "You're invited · watch.wallet",
+    description: 'An invite to watch.wallet.',
+    path: '/',
+    body: `<section class="hero"><p class="muted">Invite</p><h1>You're invited to watch.wallet.</h1>
+<p class="tag">Someone thought you should have this: watch any wallet on Bitcoin, Ethereum, Base, Polygon or Solana, or a price, and get an email, a push, or a phone call the second it moves.</p>
+${ctx.user
+    ? '<p class="muted">You already have an account, so this invite is for someone new. Pass it on.</p><a class="btn" href="/me">My watches</a>'
+    : `<a class="btn" href="/signin?next=/me">Accept: make your account</a><p class="muted small">Make a new account in the next 7 days and you both get ${INVITE_DAYS} days of Watcher: 50 watches checked every minute, phone calls and webhooks.</p>`}</section>`,
+  })
+}
+
+export type InvitesView = {
+  quota: { total: number; used: number; left: number }
+  invites: { id: string; createdAt: number; expiresAt: number | null; usedAt: number | null; note: string; revokedAt: number | null }[]
+  invitees: number
+  affiliate: string
+  link?: string
+  error?: string
+}
+
+export function invitesPage(ctx: Ctx, o: InvitesView): string {
+  const now = Date.now()
+  const rows = o.invites.map((i) => `<li>${esc(i.note || 'invite')} <span class="muted small">${i.usedAt ? `joined ${day(i.usedAt)}` : i.revokedAt ? 'withdrawn' : i.expiresAt && i.expiresAt < now ? 'expired' : `open, made ${day(i.createdAt)}`}</span></li>`).join('')
+  return layout({
+    ctx,
+    noindex: true,
+    title: 'Invites · watch.wallet',
+    description: 'Your invite links.',
+    path: '/invites',
+    body: `${o.error ? `<p class="note error">${esc(o.error)}</p>` : ''}
+<section class="hero left"><h1>Invites</h1><p class="muted">You have <b>${o.quota.left}</b> of ${o.quota.total} invite links left. Each works once, for someone who makes a new account through it within 30 days. You both get ${INVITE_DAYS} days of Watcher.</p></section>
+${o.link ? `<div class="card"><p class="note">Your new invite link, shown once:</p><pre>${esc(o.link)}</pre></div>` : ''}
+<div class="card">
+  ${o.quota.left > 0 ? `<form method="post" action="/invites" class="row">${csrfField(ctx)}<input name="note" maxlength="80" placeholder="Who is it for? (only you see this)" aria-label="Note"><button class="btn">Make an invite link</button></form>` : '<p class="muted">All your invites are out.</p>'}
+  ${rows ? `<ul>${rows}</ul>` : ''}
+</div>
+<div class="card">
+  <h2>Your link for everyone else</h2>
+  <p class="muted small">Share it anywhere. People who make an account after arriving through it are counted as yours${o.invitees ? `; ${o.invitees} joined on your invites so far` : ''}.</p>
+  <pre>${esc(o.affiliate)}</pre>
+</div>
+<p><a class="btn ghost" href="/me">My watches</a></p>`,
   })
 }

@@ -68,8 +68,37 @@ watchwallet alerts
 watchwallet ack                                 # acknowledge everything open
 watchwallet rm Cold
 watchwallet check solana <address>              # no key needed
+watchwallet redeem CR-XXXX-XXXX-XXXX-XXXX        # days of Watcher from a code
+watchwallet invite-link "for Dan"               # a single-use invite (you both get 7 days)
 watchwallet                                     # TUI: a = acknowledge, r = reload
 ```
+
+## Credit codes and invites
+
+**Credit codes** ([`@profullstack/redeem-credits`](https://www.npmjs.com/package/@profullstack/redeem-credits)):
+a code grants the unit `watcher_days`, days of the Watcher plan. A signed-in
+person redeems it under "Have a code?" on `/me` (or `watchwallet redeem CR-…`,
+MCP `redeem_code`, `POST /api/v1/redeem {"code"}` with a `ww_` key). The days
+are applied the way a purchase is: a settled $0 row in `payments` (chain
+`credit-code`) that extends `plan_until`, so they stack with paid time and
+watches a lapsed plan paused come back. Mint on the server (the redeem-credits
+CLI only speaks SQLite, so this one talks to `DATABASE_URL`):
+
+```sh
+cd /opt/watch.wallet && set -a && . /root/.local/share/watch-wallet/app.env && set +a
+bun src/cli.ts codes mint 30 --label="for Dan" [--max=10] [--expires=30d]
+bun src/cli.ts codes list
+bun src/cli.ts codes revoke <codeId>
+bun src/cli.ts codes grant someone@example.com 14      # days straight onto an account
+```
+
+**Invites** ([`@profullstack/affiliates`](https://www.npmjs.com/package/@profullstack/affiliates)):
+three single-use links per account at `/invites` (`GET/POST /api/v1/invites`,
+`watchwallet invite-link`, MCP `create_invite`). A link lands on `/i/<code>`,
+rides in a 7-day cookie, and is spent when that browser makes a **new**
+account; then both people get 7 Watcher days (at most 21 for one inviter).
+Every account also has an affiliate link (`/?ref=<code>`), remembered
+first-touch for 30 days and credited to new accounts.
 
 ## Webhooks
 

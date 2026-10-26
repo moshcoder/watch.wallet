@@ -20,7 +20,12 @@ export const HELP = `watchwallet ${VERSION}: know the second your wallet moves (
   watchwallet alerts [--limit=N]               recent alerts
   watchwallet ack [alert id]                   acknowledge one alert, or all of them
   watchwallet check <chain> <address>          one balance lookup, no key needed
+  watchwallet redeem <credit-code>             add days of Watcher from a code someone gave you
+  watchwallet invite-link [note]               a single-use invite link (you both get Watcher days)
+  watchwallet invites                          your invites left and your ?ref= link
   watchwallet mcp                              MCP server: claude mcp add watchwallet -- bunx @profullstack/watchwallet mcp
+  watchwallet codes mint <days> [--label=…] [--max=N] [--expires=30d]
+                                               on the server (DATABASE_URL): mint a credit code; also list, revoke <id>, grant <email> <days>
   watchwallet serve [--port N]                 run your own instance (DATABASE_URL, WATCHWALLET_SECRET)
 
   --json                                       machine-readable output
@@ -61,6 +66,10 @@ export async function main(argv = process.argv.slice(2), out: Out = console, cli
         const { runMcp } = await import('./mcp.js')
         await runMcp(client)
         return 0
+      }
+      case 'codes': {
+        const { codesAdmin } = await import('./codes-admin.js')
+        return await codesAdmin(argv.slice(argv.indexOf('codes') + 1), out)
       }
       case 'serve': {
         const i = argv.indexOf('--port')
@@ -121,6 +130,22 @@ export async function main(argv = process.argv.slice(2), out: Out = console, cli
       case 'ack': {
         const n = await client.ack('cli', rest[0])
         show({ acknowledged: n }, n ? `acknowledged ${n}` : 'nothing open to acknowledge')
+        return 0
+      }
+      case 'redeem': {
+        if (!rest[0]) throw new Error('usage: watchwallet redeem <credit-code>')
+        const r = await client.redeem(rest[0])
+        show(r, r.message)
+        return 0
+      }
+      case 'invite-link': {
+        const r = await client.newInvite(rest.join(' ') || undefined)
+        show(r, `${r.link}\n(${r.left} invites left)`)
+        return 0
+      }
+      case 'invites': {
+        const r = await client.invites()
+        show(r, `${r.quota.left} of ${r.quota.total} invites left · ${r.invitees} joined\nyour link: ${r.affiliate_link}`)
         return 0
       }
       case 'check': {
