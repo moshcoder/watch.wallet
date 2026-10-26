@@ -88,6 +88,11 @@ export class WatchClient {
       : this.call<{ acknowledged: number }>('POST', '/api/v1/alerts/ack', { via, ...(watchId ? { watch_id: watchId } : {}) })
     ).then((r) => r.acknowledged)
 
+  /** Redeem a credit code (days of Watcher) for this key's account. */
+  redeem = (code: string) => this.call<{ ok: true; message: string; plan: string; plan_until: string | null }>('POST', '/api/v1/redeem', { code })
+  invites = () => this.call<{ quota: { total: number; used: number; left: number }; invites: { id: string; note: string; createdAt: number; usedAt: number | null }[]; invitees: number; affiliate_link: string }>('GET', '/api/v1/invites')
+  newInvite = (note?: string) => this.call<{ link: string; code: string; expires_at: string | null; left: number }>('POST', '/api/v1/invites', note ? { note } : {})
+
   /** One look at any address; needs no key. */
   check = (chain: string, address: string) => this.call<ApiCheck>('GET', `/api/v1/check?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}`, undefined, false)
 

@@ -12,10 +12,11 @@
 import { createHmac, createPublicKey, timingSafeEqual, verify } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
+import { CodeError, Codes, INVITE_CODE, REF_CODE } from './codes.js'
 import { assetsOf, CHAIN_INFO, normalizeAddress, normalizeCoin, parseChain, STABLES, type Chain } from './chains.js'
 import { Store, type NewWatch, type User, type Watch } from './db.js'
 import { describeBalances, formatUnits, toNumber } from './engine.js'
-import { ackPage, checkPage, confirmSigninPage, dashboardPage, helpPage, homePage, messagePage, plansPage, signinPage, watchPage, type CheckResult, type Ctx } from './html.js'
+import { ackPage, checkPage, confirmSigninPage, dashboardPage, helpPage, homePage, invitedPage, invitesPage, messagePage, plansPage, signinPage, watchPage, type CheckResult, type Ctx } from './html.js'
 import { createNotifier, notifyConfig, telnyxCommand, webhookUrlError, type Notifier, type NotifyConfig, type Resolver } from './notify.js'
 import { startPitFooterRefresh } from './pit-footer.js'
 import { daysFor, isPaid, limitsFor, planConfig, planLabel, readWebhook, SETTLED, startCheckout, verifyWebhook, type PlanConfig, type Product } from './plans.js'
@@ -31,6 +32,10 @@ const SELF = 'watch.wallet'
 const DIRECT_ORIGIN = 'https://watch.wallet'
 export const RELAY_ORIGIN = 'https://watch.wallet.pit.world'
 const SESSION = 'ww_session'
+/** An invite link someone opened, until they make an account (7 days). */
+const INVITE = 'ww_invite'
+/** The first affiliate link (?ref=) a visitor arrived through (30 days). */
+const REF = 'ww_ref'
 
 const SECURITY_HEADERS: Record<string, string> = {
   'content-security-policy':
@@ -122,6 +127,8 @@ export function createApp(deps: Deps) {
   const apiLimit = new Limiter(120, 60_000)
   const checkLimit = new Limiter(10, 60_000)
   const checkGlobal = new Limiter(300, 60_000)
+  const redeemLimit = new Limiter(10, 10 * 60_000)
+  const codes = new Codes(store, plans)
 
   const direct = (c: Context) => visitorOnMoshpit(SELF, c.req.header('host'), c.req.header('x-moshpit-name'))
   const https = (c: Context) => (c.req.header('x-forwarded-proto') ?? 'https') === 'https'
@@ -147,6 +154,23 @@ export function createApp(deps: Deps) {
     await next()
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) c.header(k, v)
   })
+
+  const cookieOpts = (c: Context, maxAge: number) => ({ httpOnly: true, secure: deps.secureCookies ?? https(c), sameSite: 'Lax' as const, path: '/', maxAge })
+  // Anyone arriving with ?ref=<affiliate code> is remembered for when they make an account (first touch wins).
+  app.use('*', async (c, next) => {
+    const ref = c.req.query('ref')
+    if (ref && REF_CODE.test(ref) && !getCookie(c, REF)) setCookie(c, REF, ref, cookieOpts(c, 30 * 86_400))
+    await next()
+  })
+
+  /** A new account: spend the invite it came through and credit the affiliate link it arrived by. */
+  const welcomeNew = async (c: Context, u: User, created: boolean) => {
+    const invite = getCookie(c, INVITE)
+    if (invite && created) await codes.acceptInvite(invite, u.id).catch((e) => console.error('invite', e))
+    if (invite) deleteCookie(c, INVITE, { path: '/' })
+    const ref = getCookie(c, REF)
+    if (ref && created) await codes.affiliates.attribute(ref, u.id).catch((e) => console.error('ref', e))
+  }
 
   app.get('/health', (c) => c.json({ ok: true, version: VERSION }))
   app.get('/.well-known/openwebring.json', (c) => c.json(ringDescriptor(), 200, { 'access-control-allow-origin': '*' }))
@@ -215,7 +239,8 @@ export function createApp(deps: Deps) {
     const f = await form(c)
     const email = await store.takeLoginLink(c.req.param('token'))
     if (!email) return page(c, messagePage(await ctxOf(c), { title: 'That link is used up', message: 'Sign-in links work once, for 20 minutes.', link: { href: '/signin', label: 'Send a new one' } }), 400)
-    const user = await store.ensureUser(email)
+    const { user, created } = await store.signUp(email)
+    await welcomeNew(c, user, created)
     const sid = await store.newSession(user.id)
     setCookie(c, SESSION, sid, { httpOnly: true, secure: deps.secureCookies ?? https(c), sameSite: 'Lax', path: '/', maxAge: 60 * 86400 })
     return c.redirect(safeNext(f.next))
@@ -248,10 +273,12 @@ export function createApp(deps: Deps) {
   app.get('/me', async (c) => {
     const s = await signedIn(c)
     if (!s) return c.redirect('/signin?next=/me')
+    // Watcher days granted outside a redemption (an invite, a server-side grant) switch on here.
+    if (await codes.applyWatcherDays(s.user.id).catch(() => 0)) s.ctx.user = (await store.user(s.user.id))!
     return dashboard(c, s.ctx, c.req.query('flash') ? { flash: c.req.query('flash')! } : {})
   })
 
-  app.post('/me/:action{(phone|name|webhook|webhook-secret|key|delete)}', async (c) => {
+  app.post('/me/:action{(phone|name|webhook|webhook-secret|key|redeem|delete)}', async (c) => {
     const s = await signedIn(c)
     if (!s) return c.redirect('/signin?next=/me')
     const f = await form(c)
@@ -278,6 +305,15 @@ export function createApp(deps: Deps) {
         return back(c, 'New signing secret made. The old one stops working now.', '#webhook')
       case 'key':
         return dashboard(c, s.ctx, { apiKey: await store.newApiKey(s.user.id) })
+      case 'redeem': {
+        if (!redeemLimit.allow(`redeem:${s.user.id}`)) return dashboard(c, s.ctx, { error: 'Too many tries. Wait a few minutes.' }, 429)
+        try {
+          const flash = await codes.redeem(s.user, f.code)
+          return back(c, flash, '#code')
+        } catch (e) {
+          return dashboard(c, s.ctx, { error: e instanceof Error ? e.message : String(e) }, e instanceof CodeError ? 400 : 500)
+        }
+      }
       case 'delete':
         if (f.sure !== '1') return dashboard(c, s.ctx, { error: 'Tick the box to delete.' }, 400)
         await store.deleteUser(s.user.id)
@@ -414,6 +450,43 @@ export function createApp(deps: Deps) {
     return page(c, messagePage(ctx, { title: done ? 'Acknowledged' : 'Already acknowledged', message: 'Thanks. We keep watching.', link: { href: '/me', label: 'My watches' } }))
   })
 
+  // ---- invites and affiliate links ---------------------------------------------
+  // /i/<code> is where an invite link lands; it rides in a cookie until that browser makes an account.
+  app.get('/i/:code', async (c) => {
+    const ctx = await ctxOf(c)
+    const code = c.req.param('code')
+    if (!INVITE_CODE.test(code)) return page(c, messagePage(ctx, { title: 'Not an invite', message: 'That invite link is not right.' }), 404)
+    if (!ctx.user) setCookie(c, INVITE, code, cookieOpts(c, 7 * 86_400))
+    return page(c, invitedPage(ctx))
+  })
+  const invitesView = async (c: Context, ctx: Ctx, extra: { link?: string; error?: string } = {}, status = 200) =>
+    page(c, invitesPage(ctx, { ...(await codes.invitesView(ctx.user!.id, RELAY_ORIGIN)), ...extra }), status)
+  const newInvite = async (u: User, note: unknown) => {
+    try {
+      const invite = await codes.affiliates.createInvite(u.id, String(note ?? '').slice(0, 80))
+      return { link: `${RELAY_ORIGIN}/i/${invite.code}`, code: invite.code, expires_at: invite.expiresAt ? new Date(invite.expiresAt).toISOString() : null, left: (await codes.affiliates.quota(u.id)).left }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      throw new CodeError(m === 'no invites left' ? 'You have used all your invites.' : m)
+    }
+  }
+  app.get('/invites', async (c) => {
+    const s = await signedIn(c)
+    if (!s) return c.redirect('/signin?next=/invites')
+    return invitesView(c, s.ctx)
+  })
+  app.post('/invites', async (c) => {
+    const s = await signedIn(c)
+    if (!s) return c.redirect('/signin?next=/invites')
+    const f = await form(c)
+    if (!csrfOk(c, f.csrf)) return invitesView(c, s.ctx, { error: 'That form went stale. Try again.' }, 400)
+    try {
+      return invitesView(c, s.ctx, { link: (await newInvite(s.user, f.note)).link })
+    } catch (e) {
+      return invitesView(c, s.ctx, { error: e instanceof Error ? e.message : String(e) }, 400)
+    }
+  })
+
   // ---- plans -------------------------------------------------------------------
 
   const plansView = async (c: Context, ctx: Ctx, error?: string, status = 200) =>
@@ -528,6 +601,31 @@ export function createApp(deps: Deps) {
   api.get('/me', async (c) => {
     const u = c.get('user')
     return c.json({ email: u.email, name: u.name, plan: planLabel(plans, u, nowMs()), paid: isPaid(plans, u, nowMs()), limits: limitsFor(plans, u, nowMs()), webhook_url: u.webhook_url, watches: (await store.watches(u.id)).map(view) })
+  })
+  /** Redeem a credit code for the key's account. */
+  api.post('/redeem', async (c) => {
+    const u = c.get('user')
+    if (!redeemLimit.allow(`redeem:${u.id}`)) return c.json({ error: 'too many tries; wait a few minutes' }, 429)
+    const b = ((await c.req.json().catch(() => ({}))) ?? {}) as { code?: string }
+    try {
+      const message = await codes.redeem(u, b.code)
+      const after = (await store.user(u.id))!
+      return c.json({ ok: true, message, plan: planLabel(plans, after, nowMs()), plan_until: after.plan_until })
+    } catch (e) {
+      return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof CodeError ? 400 : 500)
+    }
+  })
+  api.get('/invites', async (c) => {
+    const v = await codes.invitesView(c.get('user').id, RELAY_ORIGIN)
+    return c.json({ quota: v.quota, invites: v.invites, invitees: v.invitees, affiliate_link: v.affiliate })
+  })
+  api.post('/invites', async (c) => {
+    const b = ((await c.req.json().catch(() => ({}))) ?? {}) as { note?: string }
+    try {
+      return c.json(await newInvite(c.get('user'), b.note), 201)
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400)
+    }
   })
   api.get('/watches', async (c) => c.json({ watches: (await store.watches(c.get('user').id)).map(view) }))
   api.post('/watches', async (c) => {

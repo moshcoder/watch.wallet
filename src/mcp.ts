@@ -44,6 +44,8 @@ export function createMcpServer(client = new WatchClient()): McpServer {
     await client.remove(w.id)
     return { removed: w.name }
   }))
+  server.tool('redeem_code', 'Redeem a credit code someone gave you: it adds days of the Watcher plan.', { code: z.string().min(6).max(80) }, wrap(({ code }: any) => client.redeem(code)))
+  server.tool('create_invite', 'Make a single-use invite link to watch.wallet (each person has 3). Whoever makes a new account through it and you both get Watcher days.', { note: z.string().max(80).optional() }, wrap(({ note }: any) => client.newInvite(note)))
   server.tool('recent_alerts', 'Recent alerts, newest first, with whether each was acknowledged.', { limit: z.number().int().min(1).max(200).optional() }, wrap(({ limit }: any) => client.alerts(limit ?? 20)))
   return server
 }

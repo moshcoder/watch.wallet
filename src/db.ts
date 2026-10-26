@@ -194,6 +194,13 @@ export class Store {
     return (await this.userByEmail(e))!
   }
 
+  /** Like ensureUser, and whether this call made the account (an invite only counts for a new one). */
+  async signUp(email: string): Promise<{ user: User; created: boolean }> {
+    const e = email.trim().toLowerCase()
+    const made = await this.sql`INSERT INTO users (id, email) VALUES (${id()}, ${e}) ON CONFLICT (email) DO NOTHING RETURNING id`
+    return { user: (await this.userByEmail(e))!, created: made.length === 1 }
+  }
+
   async updateUser(userId: string, fields: { name?: string; phone?: string; webhook_url?: string }): Promise<void> {
     if (fields.name !== undefined) await this.sql`UPDATE users SET name = ${fields.name.slice(0, 80)} WHERE id = ${userId}`
     if (fields.phone !== undefined) await this.sql`UPDATE users SET phone = ${fields.phone} WHERE id = ${userId}`
@@ -483,6 +490,19 @@ export class Store {
         WHERE id = ${p.user_id}`
       return { granted: true, userId: p.user_id }
     })
+  }
+
+  /**
+   * Watcher days that did not come from a purchase (a credit code, an invite)
+   * go down the same path a purchase does: a settled $0 payment row that
+   * extends plan_until. So the plan has one source of truth, the payments
+   * table shows where the days came from, and nothing else needs to know.
+   */
+  async grantPlanDays(userId: string, days: number, source: { product: string; chain: string; raw: unknown }): Promise<boolean> {
+    if (!(days >= 1)) return false
+    const ref = `${source.chain}:${userId}:${Date.now()}:${randomBytes(4).toString('hex')}`
+    await this.recordPayment({ ref, user_id: userId, product: source.product.slice(0, 60), amount_cents: 0, chain: source.chain, raw: source.raw })
+    return (await this.settlePayment(ref, 'credit', source.raw, true, () => Math.floor(days))).granted
   }
 
   /** Paid plans that end within `withinMs` and have not been warned this period. */
