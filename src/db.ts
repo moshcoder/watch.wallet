@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS login_links (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS login_links_email ON login_links(email, created_at);
+-- The invite / ?ref= the sign-in form was sent with: the link is often opened in another browser, without our cookies.
+ALTER TABLE login_links ADD COLUMN IF NOT EXISTS invite text;
+ALTER TABLE login_links ADD COLUMN IF NOT EXISTS ref text;
 CREATE TABLE IF NOT EXISTS watches (
   id text PRIMARY KEY,
   user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -221,9 +224,10 @@ export class Store {
     await this.sql`DELETE FROM users WHERE id = ${userId}`
   }
 
-  async newLoginLink(email: string, ttlMs = 20 * 60_000): Promise<string> {
+  async newLoginLink(email: string, ttlMs = 20 * 60_000, carry: { invite?: string | null; ref?: string | null } = {}): Promise<string> {
     const t = token('', 32)
-    await this.sql`INSERT INTO login_links (token_hash, email, expires_at) VALUES (${hash(t)}, ${email.toLowerCase()}, ${new Date(this.now().getTime() + ttlMs)})`
+    await this.sql`INSERT INTO login_links (token_hash, email, expires_at, invite, ref)
+      VALUES (${hash(t)}, ${email.toLowerCase()}, ${new Date(this.now().getTime() + ttlMs)}, ${carry.invite ?? null}, ${carry.ref ?? null})`
     return t
   }
 
@@ -234,8 +238,13 @@ export class Store {
 
   /** One use, unexpired: the email it was sent to, or null. */
   async takeLoginLink(t: string): Promise<string | null> {
-    const [r] = await this.sql`DELETE FROM login_links WHERE token_hash = ${hash(t)} AND expires_at > ${this.now()} RETURNING email`
-    return r?.email ?? null
+    return (await this.spendLoginLink(t))?.email ?? null
+  }
+
+  /** One use, unexpired: the email, and the invite / ?ref= code the sign-in was asked for with. */
+  async spendLoginLink(t: string): Promise<{ email: string; invite: string | null; ref: string | null } | null> {
+    const [r] = await this.sql`DELETE FROM login_links WHERE token_hash = ${hash(t)} AND expires_at > ${this.now()} RETURNING email, invite, ref`
+    return r ? { email: r.email, invite: r.invite ?? null, ref: r.ref ?? null } : null
   }
 
   async newSession(userId: string, ttlMs = 60 * DAY): Promise<string> {

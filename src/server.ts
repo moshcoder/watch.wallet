@@ -164,11 +164,12 @@ export function createApp(deps: Deps) {
   })
 
   /** A new account: spend the invite it came through and credit the affiliate link it arrived by. */
-  const welcomeNew = async (c: Context, u: User, created: boolean) => {
-    const invite = getCookie(c, INVITE)
+  const welcomeNew = async (c: Context, u: User, created: boolean, carried: { invite: string | null; ref: string | null }) => {
+    // The sign-in link's own copy first: the browser that clicks it may not be the one that asked for it.
+    const invite = carried.invite ?? getCookie(c, INVITE)
     if (invite && created) await codes.acceptInvite(invite, u.id).catch((e) => console.error('invite', e))
-    if (invite) deleteCookie(c, INVITE, { path: '/' })
-    const ref = getCookie(c, REF)
+    if (getCookie(c, INVITE)) deleteCookie(c, INVITE, { path: '/' })
+    const ref = carried.ref ?? getCookie(c, REF)
     if (ref && created) await codes.affiliates.attribute(ref, u.id).catch((e) => console.error('ref', e))
   }
 
@@ -223,7 +224,10 @@ export function createApp(deps: Deps) {
     if (!signinLimit.allow(`ip:${ip(c)}`) || (await store.recentLoginLinks(email, 60 * 60_000)) >= 5) {
       return page(c, signinPage(ctx, { error: 'Too many sign-in emails. Try again in an hour.' }), 429)
     }
-    const t = await store.newLoginLink(email)
+    // The link is often opened in another browser (the phone, a mail app's own browser), so the invite and ?ref= ride on it.
+    const invite = getCookie(c, INVITE)
+    const ref = getCookie(c, REF)
+    const t = await store.newLoginLink(email, undefined, { invite: invite && INVITE_CODE.test(invite) ? invite : null, ref: ref && REF_CODE.test(ref) ? ref : null })
     const next = safeNext(f.next)
     await notifier.mail({
       to: email,
@@ -237,10 +241,11 @@ export function createApp(deps: Deps) {
 
   app.post('/auth/:token', async (c) => {
     const f = await form(c)
-    const email = await store.takeLoginLink(c.req.param('token'))
-    if (!email) return page(c, messagePage(await ctxOf(c), { title: 'That link is used up', message: 'Sign-in links work once, for 20 minutes.', link: { href: '/signin', label: 'Send a new one' } }), 400)
+    const link = await store.spendLoginLink(c.req.param('token'))
+    const email = link?.email
+    if (!link || !email) return page(c, messagePage(await ctxOf(c), { title: 'That link is used up', message: 'Sign-in links work once, for 20 minutes.', link: { href: '/signin', label: 'Send a new one' } }), 400)
     const { user, created } = await store.signUp(email)
-    await welcomeNew(c, user, created)
+    await welcomeNew(c, user, created, link)
     const sid = await store.newSession(user.id)
     setCookie(c, SESSION, sid, { httpOnly: true, secure: deps.secureCookies ?? https(c), sameSite: 'Lax', path: '/', maxAge: 60 * 86400 })
     return c.redirect(safeNext(f.next))
