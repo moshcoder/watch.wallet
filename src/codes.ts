@@ -12,7 +12,7 @@
  * both people INVITE_DAYS Watcher days (so one person can earn at most three
  * weeks from inviting). Affiliate links (?ref=) are remembered first-touch.
  *
- * Both modules keep their own tables (cr_*, aff_*) in the app's Postgres,
+ * Both modules keep their own tables (credit_*, aff_*) in the app's Postgres,
  * through a tiny adapter over Bun's SQL client.
  */
 import { Affiliates, postgresStore as affiliateStore } from '@profullstack/affiliates'

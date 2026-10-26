@@ -85,11 +85,11 @@ watches a lapsed plan paused come back. Mint on the server (the redeem-credits
 CLI only speaks SQLite, so this one talks to `DATABASE_URL`):
 
 ```sh
-cd /opt/watch.wallet && set -a && . /root/.local/share/watch-wallet/app.env && set +a
-bun src/cli.ts codes mint 30 --label="for Dan" [--max=10] [--expires=30d]
-bun src/cli.ts codes list
-bun src/cli.ts codes revoke <codeId>
-bun src/cli.ts codes grant someone@example.com 14      # days straight onto an account
+export PATH=/root/.bun/bin:$PATH; cd /opt/watch.wallet && set -a && . /root/.local/share/watch-wallet/app.env && set +a
+bun bin/watchwallet codes mint 30 --label="for Dan" [--max=10] [--expires=30d]
+bun bin/watchwallet codes list
+bun bin/watchwallet codes revoke <codeId>
+bun bin/watchwallet codes grant someone@example.com 14      # days straight onto an account
 ```
 
 **Invites** ([`@profullstack/affiliates`](https://www.npmjs.com/package/@profullstack/affiliates)):
