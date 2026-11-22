@@ -300,6 +300,22 @@ describe('watch.wallet end to end', () => {
     expect(Math.round(((await owner()).plan_until!.getTime() - clock) / DAY)).toBe(365)
   })
 
+  test('sign out ends the session, from the button (POST) and from the address bar (GET)', async () => {
+    const u = await owner()
+    for (const method of ['POST', 'GET']) {
+      cookie = `ww_session=${await store.newSession(u.id)}`
+      csrf = (await (await req('/me')).text()).match(/name="csrf" value="([a-f0-9]{32})"/)![1]!
+      const res = method === 'POST' ? await post('/auth/logout', {}) : await req('/auth/logout')
+      expect(res.status).toBe(302)
+      expect(res.headers.get('location')).toBe('/')
+      expect(res.headers.get('set-cookie')).toContain('ww_session=;')
+      expect(await store.session(cookie.split('=')[1])).toBeNull()
+      expect((await req('/me')).status).not.toBe(200)
+    }
+    cookie = `ww_session=${await store.newSession(u.id)}`
+    csrf = (await (await req('/me')).text()).match(/name="csrf" value="([a-f0-9]{32})"/)![1]!
+  })
+
   test('deleting the account removes every watch and alert', async () => {
     expect((await post('/me/delete', { sure: '1' })).status).toBe(200)
     const [r] = await store.sql`SELECT (SELECT count(*)::int FROM watches) AS w, (SELECT count(*)::int FROM alerts) AS a`
