@@ -18,6 +18,7 @@ import { Store, type NewWatch, type User, type Watch } from './db.js'
 import { describeBalances, formatUnits, toNumber } from './engine.js'
 import { ackPage, checkPage, confirmSigninPage, dashboardPage, helpPage, homePage, invitedPage, invitesPage, messagePage, plansPage, signinPage, watchPage, type CheckResult, type Ctx } from './html.js'
 import { createNotifier, notifyConfig, telnyxCommand, webhookUrlError, type Notifier, type NotifyConfig, type Resolver } from './notify.js'
+import { parseCoinpayPaste } from './paste.js'
 import { startPitFooterRefresh } from './pit-footer.js'
 import { daysFor, isPaid, limitsFor, planConfig, planLabel, readWebhook, SETTLED, startCheckout, verifyWebhook, type PlanConfig, type Product } from './plans.js'
 import { ringDescriptor, startRingFooterRefresh } from './ring-footer.js'
@@ -344,6 +345,50 @@ export function createApp(deps: Deps) {
     return c.json({ ok: true })
   })
 
+  /** A CoinPay "Copy All Addresses" paste: new watches up to the plan's room, skipping addresses already watched. */
+  const addPasted = async (u: User, text: unknown) => {
+    const r = parseCoinpayPaste(text)
+    const have = new Set((await store.watches(u.id)).filter((w) => w.kind === 'address').map((w) => `${w.chain}:${w.address}`))
+    let room = limitsFor(plans, u, nowMs()).watches - (await store.countWatches(u.id))
+    const added: Watch[] = []
+    const already: string[] = []
+    const overLimit: string[] = []
+    for (const p of r.watches) {
+      if (have.has(`${p.chain}:${p.address}`)) {
+        already.push(p.label)
+        continue
+      }
+      if (room <= 0) {
+        overLimit.push(p.label)
+        continue
+      }
+      added.push(await store.createWatch(u.id, { kind: 'address', label: p.label, chain: p.chain, address: p.address, min_usd: 0, call: false }))
+      have.add(`${p.chain}:${p.address}`)
+      room--
+    }
+    return { added, already, overLimit, unsupported: r.unsupported, invalid: r.invalid }
+  }
+  const pasteSummary = (o: Awaited<ReturnType<typeof addPasted>>, limit: number) =>
+    [
+      `Added ${o.added.length} watch${o.added.length === 1 ? '' : 'es'}.`,
+      o.already.length ? `Already watching ${o.already.length}.` : '',
+      o.overLimit.length ? `${o.overLimit.length} did not fit: your plan holds ${limit} watches.` : '',
+      o.unsupported.length ? `Not watchable here: ${o.unsupported.join(', ')}.` : '',
+      o.invalid.length ? `Could not read: ${o.invalid.map((l) => (l.length > 40 ? `${l.slice(0, 40)}…` : l)).join(' | ')}.` : '',
+    ].filter(Boolean).join(' ')
+
+  app.post('/w/paste', async (c) => {
+    const s = await signedIn(c)
+    if (!s) return c.redirect('/signin?next=/me')
+    const f = await form(c)
+    if (!csrfOk(c, f.csrf)) return dashboard(c, s.ctx, { error: 'That form went stale. Try again.' }, 400)
+    if (!String(f.addresses ?? '').trim()) return dashboard(c, s.ctx, { error: 'Paste your addresses first, one per line, like "BTC: bc1…".' }, 400)
+    const o = await addPasted(s.user, f.addresses)
+    const msg = pasteSummary(o, limitsFor(plans, s.user, nowMs()).watches)
+    if (!o.added.length) return dashboard(c, s.ctx, { error: msg }, o.overLimit.length ? 402 : 400)
+    return c.redirect(`/me?flash=${encodeURIComponent(`${msg} The first read of each is the baseline; any change after that alerts you.`)}`)
+  })
+
   app.post('/w', async (c) => {
     const s = await signedIn(c)
     if (!s) return c.redirect('/signin?next=/me')
@@ -646,6 +691,13 @@ export function createApp(deps: Deps) {
     const parsed = parseWatch(b, isPaid(plans, u, nowMs()))
     if (typeof parsed === 'string') return c.json({ error: parsed }, 400)
     return c.json(view(await store.createWatch(u.id, parsed)), 201)
+  })
+  api.post('/watches/paste', async (c) => {
+    const u = c.get('user')
+    const raw = c.req.header('content-type')?.includes('application/json') ? (((await c.req.json().catch(() => ({}))) ?? {}) as Record<string, unknown>).text : await c.req.text()
+    if (!String(raw ?? '').trim()) return c.json({ error: 'send the paste as text/plain, or JSON {"text": "BTC: bc1...\\nETH: 0x..."}' }, 400)
+    const o = await addPasted(u, raw)
+    return c.json({ added: o.added.map(view), already_watching: o.already, over_limit: o.overLimit, unsupported: o.unsupported, invalid: o.invalid }, o.added.length ? 201 : 200)
   })
   const apiWatch = async (c: Context<{ Variables: { user: User } }>) => store.watchOf(c.get('user').id, c.req.param('id')!)
   api.get('/watches/:id', async (c) => {
