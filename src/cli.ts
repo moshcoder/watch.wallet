@@ -13,6 +13,8 @@ export const HELP = `watchwallet ${VERSION}: know the second your wallet moves (
   watchwallet status                           your watches and their last balances
   watchwallet add <chain> <address> [--label=…] [--min-usd=N] [--call]
                                                watch an address (bitcoin, ethereum, base, polygon, solana)
+  watchwallet paste [file]                     watch every address in a CoinPay "Copy All Addresses" paste
+                                               (stdin when no file: pbpaste | watchwallet paste)
   watchwallet price <coin> above|below <usd> [--label=…] [--call]
                                                watch a price, like: price BTC below 60000
   watchwallet rm <watch>                       stop watching (id or label)
@@ -100,6 +102,19 @@ export async function main(argv = process.argv.slice(2), out: Out = console, cli
         const w = await client.addAddress({ chain, address, ...(flag('label') ? { label: flag('label')! } : {}), ...(min ? { min_usd: Number(min) } : {}), ...(has('call') ? { call: true } : {}) })
         show(w, `watching: ${w.name}. The first read is the baseline; any move after that alerts you.`)
         return 0
+      }
+      case 'paste': {
+        const text = rest[0] && rest[0] !== '-' ? await Bun.file(rest[0]).text() : await new Response(Bun.stdin.stream()).text()
+        if (!text.trim()) throw new Error('usage: watchwallet paste [file]   (or pipe it in: pbpaste | watchwallet paste)')
+        const r = await client.paste(text)
+        show(r, [
+          `added ${r.added.length}${r.added.length ? `: ${r.added.map((w) => w.name).join(', ')}` : ''}`,
+          r.already_watching.length ? `already watching: ${r.already_watching.join(', ')}` : '',
+          r.over_limit.length ? `did not fit your plan: ${r.over_limit.join(', ')}` : '',
+          r.unsupported.length ? `not watchable here: ${r.unsupported.join(', ')}` : '',
+          r.invalid.length ? `could not read: ${r.invalid.join(' | ')}` : '',
+        ].filter(Boolean).join('\n'))
+        return r.added.length || r.already_watching.length ? 0 : 1
       }
       case 'price': {
         const [coin, direction, level] = rest

@@ -300,6 +300,42 @@ describe('watch.wallet end to end', () => {
     expect(Math.round(((await owner()).plan_until!.getTime() - clock) / DAY)).toBe(365)
   })
 
+  test('paste many: a CoinPay "Copy All Addresses" paste from the form and the API', async () => {
+    const u = await owner()
+    const SOL = 'So11111111111111111111111111111111111111112'
+    const BTC = 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'
+    const before = (await store.watches(u.id)).length
+    const had = new Set((await store.watches(u.id)).map((w) => `${w.chain}:${w.address}`))
+    const res = await post('/w/paste', { addresses: `BTC (Vault): ${BTC}\nSOL: ${SOL}\nUSDC_SOL: ${SOL}\nXRP: rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh\nnonsense` })
+    expect(res.status).toBe(302)
+    const flash = decodeURIComponent(res.headers.get('location')!)
+    expect(flash).toContain('Added 2 watches.')
+    expect(flash).toContain('Not watchable here: XRP.')
+    expect(flash).toContain('Could not read: nonsense.')
+    const after = await store.watches(u.id)
+    expect(after.length).toBe(before + 2)
+    expect(after.find((w) => w.chain === 'solana' && w.address === SOL)!.label).toBe('CoinPay SOL, USDC_SOL')
+    expect(after.find((w) => w.chain === 'bitcoin' && w.address === BTC)!.label).toBe('Vault')
+    expect(had.has(`bitcoin:${BTC}`)).toBe(false)
+    // Pasting again adds nothing.
+    const again = await post('/w/paste', { addresses: `SOL: ${SOL}` })
+    expect(again.status).toBe(400)
+    expect(await again.text()).toContain('Already watching 1.')
+    // The /me page offers the box.
+    expect(await (await req('/me')).text()).toContain('action="/w/paste"')
+    // The API takes text/plain and JSON.
+    if (!apiKey) apiKey = await store.newApiKey(u.id)
+    const plain = await api('/api/v1/watches/paste', { method: 'POST', body: `POL: ${A}\nSOL: ${SOL}`, headers: { 'content-type': 'text/plain' } })
+    expect(plain.status).toBe(201)
+    const pj = await plain.json()
+    expect(pj.added.map((w: { chain: string }) => w.chain)).toEqual(['polygon'])
+    expect(pj.already_watching).toEqual(['CoinPay SOL'])
+    const json = await api('/api/v1/watches/paste', { method: 'POST', body: JSON.stringify({ text: `POL: ${A}` }) })
+    expect(json.status).toBe(200)
+    expect((await json.json()).already_watching).toEqual(['CoinPay POL'])
+    for (const w of await store.watches(u.id)) if (!had.has(`${w.chain}:${w.address}`)) await store.sql`DELETE FROM watches WHERE id = ${w.id}`
+  })
+
   test('sign out ends the session, from the button (POST) and from the address bar (GET)', async () => {
     const u = await owner()
     for (const method of ['POST', 'GET']) {

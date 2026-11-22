@@ -33,6 +33,7 @@ export type ApiWatch = {
 }
 export type ApiAlert = { id: string; watch_id: string; at: string; kind: string; summary: string; usd: number | null; acked_at: string | null; acked_via: string }
 export type ApiMe = { email: string; name: string; plan: string; paid: boolean; limits: { watches: number; everyMs: number }; watches: ApiWatch[] }
+export type ApiPaste = { added: ApiWatch[]; already_watching: string[]; over_limit: string[]; unsupported: string[]; invalid: string[] }
 export type ApiCheck = { chain: string; address: string; rows: { asset: string; amount: string; usd: number | null }[]; pending: boolean }
 
 export const KEY_FILE = join(homedir(), '.config', 'watchwallet', 'key')
@@ -77,6 +78,8 @@ export class WatchClient {
   watches = () => this.call<{ watches: ApiWatch[] }>('GET', '/api/v1/watches').then((r) => r.watches)
   addAddress = (input: { chain: string; address: string; label?: string; min_usd?: number; call?: boolean }) => this.call<ApiWatch>('POST', '/api/v1/watches', { kind: 'address', ...input })
   addPrice = (input: { coin: string; direction: 'above' | 'below'; level_usd: number; label?: string; call?: boolean }) => this.call<ApiWatch>('POST', '/api/v1/watches', { kind: 'price', ...input })
+  /** A CoinPay "Copy All Addresses" paste (one "SYMBOL: address" per line): one watch per chain + address. */
+  paste = (text: string) => this.call<ApiPaste>('POST', '/api/v1/watches/paste', { text })
   update = (id: string, input: { label?: string; min_usd?: number; call?: boolean; level_usd?: number; direction?: string }) => this.call<ApiWatch>('PATCH', `/api/v1/watches/${encodeURIComponent(id)}`, input)
   remove = (id: string) => this.call<{ ok: true }>('DELETE', `/api/v1/watches/${encodeURIComponent(id)}`)
   pause = (id: string) => this.call<ApiWatch>('POST', `/api/v1/watches/${encodeURIComponent(id)}/pause`)

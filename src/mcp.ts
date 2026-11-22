@@ -34,6 +34,12 @@ export function createMcpServer(client = new WatchClient()): McpServer {
     wrap((input: any) => client.addAddress(input)),
   )
   server.tool(
+    'paste_addresses',
+    'Watch many addresses at once from a CoinPay "Copy All Addresses" paste: one "SYMBOL: address" or "SYMBOL (label): address" per line (BTC, ETH, USDC_ETH, POL, SOL, USDC_BASE, ...). Same chain + address becomes one watch; addresses already watched are skipped; other chains (BCH, TRON, XRP, ...) are reported as unsupported.',
+    { text: z.string().min(1).max(20000) },
+    wrap((input: any) => client.paste(input.text)),
+  )
+  server.tool(
     'add_price_watch',
     'Watch a price: alert once when a coin (Coinbase ticker, like BTC) goes above or below a USD level. It re-arms when the price crosses back.',
     { coin: z.string().min(2).max(10), direction: z.enum(['above', 'below']), level_usd: z.number().positive(), label: z.string().max(60).optional(), call: z.boolean().optional() },

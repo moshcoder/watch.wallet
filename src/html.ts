@@ -188,8 +188,10 @@ bunx @profullstack/watchwallet mcp                                 # MCP server 
 <pre>curl "${SITE}/api/v1/check?chain=bitcoin&amp;address=bc1q…"
 curl ${SITE}/api/v1/watches -H "authorization: Bearer $WATCHWALLET_KEY"
 curl -X POST ${SITE}/api/v1/watches -H "authorization: Bearer $WATCHWALLET_KEY" \\
-  -H 'content-type: application/json' -d '{"kind":"address","chain":"base","address":"0x…","label":"Treasury"}'</pre>
-<p class="muted small">Endpoints: <code>GET /api/v1/me</code>, <code>GET|POST /api/v1/watches</code>, <code>GET|PATCH|DELETE /api/v1/watches/:id</code>, <code>POST /api/v1/watches/:id/(pause|resume)</code>, <code>GET /api/v1/alerts</code>, <code>POST /api/v1/alerts/ack</code>, <code>POST /api/v1/alerts/:id/ack</code>, and without a key <code>GET /api/v1/check?chain=&amp;address=</code> (rate limited).</p>
+  -H 'content-type: application/json' -d '{"kind":"address","chain":"base","address":"0x…","label":"Treasury"}'
+pbpaste | curl -X POST ${SITE}/api/v1/watches/paste -H "authorization: Bearer $WATCHWALLET_KEY" \\
+  -H 'content-type: text/plain' --data-binary @-             # CoinPay "Copy All Addresses"</pre>
+<p class="muted small">Endpoints: <code>GET /api/v1/me</code>, <code>GET|POST /api/v1/watches</code>, <code>POST /api/v1/watches/paste</code>, <code>GET|PATCH|DELETE /api/v1/watches/:id</code>, <code>POST /api/v1/watches/:id/(pause|resume)</code>, <code>GET /api/v1/alerts</code>, <code>POST /api/v1/alerts/ack</code>, <code>POST /api/v1/alerts/:id/ack</code>, and without a key <code>GET /api/v1/check?chain=&amp;address=</code> (rate limited).</p>
 <p class="muted small">MCP tools: check_address (no key), list_watches, add_watch, add_price_watch, remove_watch, recent_alerts, redeem_code, create_invite.</p></div>
 <div class="card" id="codes"><h2>Codes and invites</h2><p>A credit code someone gave you goes on <a href="/me#code">your page</a> under "Have a code?" (or <code>watchwallet redeem CR-…</code>, or <code>POST /api/v1/redeem {"code"}</code>): it adds days of Watcher, on top of any time you have left. Every account also has ${INVITES_PER_PERSON} single-use invite links (<a href="/invites">Invites</a>); whoever makes a new account through one, and you, each get ${INVITE_DAYS} days of Watcher. Your own link (<code>/?ref=…</code>) is there too, for everyone else.</p></div>
 <div class="card"><h2>What we keep</h2><p>Your email, the addresses and prices you watch, their last balances and your alerts. We never ask for a private key or a seed, and nothing here can move funds. Delete your account and it all goes.</p></div>
@@ -335,6 +337,13 @@ ${room ? `<div class="card" id="add">
     <label>Label <span class="muted">(optional)</span><input name="label" maxlength="60"></label>
     <label><input type="checkbox" name="call" value="1"${paidOnly}> Call me when it fires <span class="muted">(Watcher)</span></label>
     <button class="btn ghost">Watch the price</button>
+  </form></details>
+  <details${d.watches.length ? '' : ' open'}><summary>Paste many addresses at once</summary>
+  <form method="post" action="/w/paste" class="stack">
+    ${csrfField(ctx)}
+    <p class="muted small">On coinpayportal.com open Settings → Global Wallets (or a business's Wallets tab, or your web wallet), press <b>Copy All Addresses</b>, and paste it here. One per line, <code>BTC: bc1…</code> or <code>USDC_ETH (Treasury): 0x…</code>. Bitcoin, Ethereum, Base, Polygon and Solana are watched; ETH, USDC and USDT on the same address become one watch. Addresses you already watch are skipped.</p>
+    <label>Addresses <textarea name="addresses" rows="8" required autocomplete="off" spellcheck="false" placeholder="BTC: bc1q…&#10;ETH: 0x…&#10;USDC_ETH: 0x…&#10;SOL: …&#10;POL: 0x…"></textarea></label>
+    <button class="btn ghost">Watch them all</button>
   </form></details>
 </div>` : `<p class="muted small">Your plan holds ${d.limits.watches} watches. ${d.paid ? '' : '<a href="/plans">Watcher</a> holds 50.'}</p>`}
 <div class="card" id="alerts">
